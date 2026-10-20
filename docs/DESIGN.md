@@ -61,11 +61,14 @@ above, which keeps parsing in one place and makes conversion unit-testable witho
   conversion, backfill.
 - `pkg/xmppx`: the XMPP client session (dialing, TLS, SASL, stream management, reconnect) and
   the extension element types.
-- `pkg/sqlitedrv`: registers bridgev2's `sqlite3-fk-wal` driver name on top of the pure-Go
-  `modernc.org/sqlite`, so the binary builds with `CGO_ENABLED=0`.
-- End-to-bridge encryption uses mautrix's pure-Go Olm (`-tags goolm`), again so no CGO is
-  needed. The result is a static binary on a distroless base image, built for linux/amd64 and
-  linux/arm64.
+- **cgo is required, but the binary is still static.** The plan was a pure-Go SQLite driver,
+  but bridgev2's runner (`mxmain`) references `mattn/go-sqlite3` error types that only exist
+  in cgo builds, so a `CGO_ENABLED=0` build would mean forking `mxmain`. Instead the image
+  builds against musl and links statically (`-extldflags -static`), cross-compiling with
+  [`xx`](https://github.com/tonistiigi/xx) so the arm64 build doesn't need emulation. The
+  result is a static binary on `distroless/static`, for linux/amd64 and linux/arm64.
+- End-to-bridge encryption uses mautrix's pure-Go Olm (`-tags goolm`), so libolm isn't
+  needed. Every `go build`/`go test` therefore needs `-tags goolm` (the Makefile and CI set it).
 
 ## 3. Database
 
@@ -74,8 +77,9 @@ comes from the config. bbctl generates `file:sh-xmpp.db?_txlock=immediate`, a pa
 the working directory; the image sets `WORKDIR /data`, so it ends up at `/data/sh-xmpp.db`.
 Postgres keeps working through the bridgev2 config as usual.
 
-One small connector table (`xmpp_message_alias`) maps server-assigned stanza IDs to bridged
-message IDs (see §4). It is migrated by its own version table, separate from bridgev2's.
+One small connector table (`xmpp_message_alias`) maps room-assigned stanza IDs to bridged
+message IDs (see §4). It is migrated by its own version table (`xmpp_version`), separate from
+bridgev2's.
 
 ## 4. ID scheme
 
@@ -88,7 +92,7 @@ account is its own login, so one Matrix user can have several.
 | `PortalKey` (1:1) | `ID = "dm:" + contact bare JID`, `Receiver = login ID` | `dm:bob@example.net` / `alice@example.org` |
 | `PortalKey` (MUC) | `ID = "muc:" + room bare JID`, `Receiver = login ID` | `muc:dev@conference.example.net` / `alice@example.org` |
 | `UserID` (contact, or occupant with a known real JID) | bare JID | `bob@example.net` |
-| `UserID` (occupant of a semi-anonymous room) | `occ:` + room JID + `/` + nick (or `occ:` + room + `#` + occupant-id when XEP-0421 is present) | `occ:dev@conference.example.net/Bob` |
+| `UserID` (occupant of a semi-anonymous room) | `occ:` + occupant JID (room + `/` + nick) | `occ:dev@conference.example.net/Bob` |
 | `MessageID` | `chat bare JID + "|" + message ID` (see below) | `dm:bob@example.net|a1b2c3` |
 
 Every portal has a receiver, so portals are always per login. Two of a user's accounts in the
@@ -125,6 +129,9 @@ groupchat references can be resolved. Messages with neither ID get a determinist
 - **TLS.** Required. Certificates are verified against the JID's domain using the system roots
   (`SSL_CERT_FILE` is honored for private CAs). There is no plaintext or skip-verify fallback;
   STARTTLS is attempted even if the server doesn't advertise it, to prevent downgrades.
+- **Resource binding.** mellium v0.23.0's bind feature sends an empty `<resource/>`, so
+  `pkg/xmppx` has its own bind feature that requests the login's stable resource
+  (`mautrix-xmpp.<random>`).
 - **Auth.** SCRAM-SHA-256-PLUS, then SCRAM-SHA-256, SCRAM-SHA-1-PLUS, SCRAM-SHA-1, and PLAIN
   last. All of them run only over TLS.
 - **Reconnect.** Exponential backoff with jitter, with configurable initial and maximum delay.
@@ -204,10 +211,12 @@ Server support is detected with disco#info (`urn:xmpp:mam:2`) on the account's b
 - **Backwards backfill** (Beeper's backfill queue): `FetchMessages(backward)` pages with
   `<before>` = the oldest archive ID we've seen, which is kept as the cursor.
 - **Catch-up after (re)connect**: one query against the account archive with
-  `start = last seen timestamp` (in login metadata), paged up to `network.mam.catchup_max`.
-  Results are queued as normal live events, so they create portals if needed and dedupe by
-  message ID. Each joined MUC with MAM gets the same treatment, `after` the last stanza-id we
-  saw in that room. MUC joins request `maxstanzas=0` history so join history doesn't duplicate
+  `start = last seen timestamp − 1 minute` (the timestamp is kept in login metadata), paged up
+  to `network.mam.catchup_max`. Each joined MUC with MAM gets the same query. Results are
+  queued as normal live events, so they create portals if needed and dedupe by message ID.
+  Edits, retractions and reactions older than the last seen timestamp are skipped, since they
+  have no ID to dedupe on. A fresh login skips catch-up; new portals get their history from
+  initial backfill. MUC joins request `maxstanzas=0` history so join history doesn't duplicate
   MAM.
 
 ## 8. Configuration
@@ -227,7 +236,7 @@ network:
   media: { max_download_size: 104857600, max_upload_size: 104857600 }
   send_read_markers: true
   send_typing: true
-  log_stanzas: false       # debug only: logs XML after authentication; may include message bodies
+  log_message_content: false  # debug only: log XMPP stanzas and Matrix request bodies
 ```
 
 The binary exits with a clear message if the config is missing or unparsable. If the config
@@ -236,10 +245,17 @@ memory only and nothing is written next to it.
 
 ## 9. Logging
 
-zerolog through bridgev2's `logging` config, written to stdout. Passwords are never logged:
-the login flow doesn't log input, the password lives only in login metadata in the database,
-and stanza logging (`log_stanzas`) only starts after SASL completes. Message bodies are never
-logged by default, not even at debug level. Only `log_stanzas: true` logs them.
+zerolog through bridgev2's `logging` config. bbctl's config writes to stdout and to
+`./logs/bridge.log`, which ends up under `/data` in the container. Passwords are never logged:
+the login flow doesn't log input, the bot redacts the password message in the management
+room, the password lives only in login metadata in the database, and XMPP stream logging
+starts only after SASL completes.
+
+Message bodies are not logged by default, even at debug level (bbctl's default). mautrix-go
+logs the JSON body of every Matrix request at debug level, so the binary wraps each configured
+log writer and replaces `req_body` on Matrix `/send/` requests with a placeholder. Setting
+`network.log_message_content: true` turns that redaction off and also logs the raw XMPP stream
+at trace level.
 
 ## 10. Testing
 
