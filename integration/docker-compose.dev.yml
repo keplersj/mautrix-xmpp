@@ -4,7 +4,7 @@
 #   XMPPX_TEST_SERVER=localhost:5222 XMPPX_TEST_CA=integration/.certs/ca.crt go test ./pkg/xmppx/...
 services:
   prosody:
-    image: prosodyim/prosody:13.0
+    image: prosodyim/prosody:13.0@sha256:0d4efc7c11018dfd863c9a25495efe706027de357a58a18ef02f8c484fb264ed
     entrypoint: ["/entrypoint-test.sh"]
     volumes:
       - ./prosody/prosody.cfg.lua:/etc/prosody/prosody.cfg.lua:ro
