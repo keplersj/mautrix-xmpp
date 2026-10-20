@@ -1,0 +1,23 @@
+version: "2"
+run:
+  build-tags: [goolm, integration]
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - errorlint
+    - misspell
+    - nilerr
+    - unconvert
+    - usestdlibvars
+  settings:
+    errcheck:
+      exclude-functions:
+        - (*github.com/keplersj/mautrix-xmpp/pkg/xmppx.Session).Close
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes: [github.com/keplersj/mautrix-xmpp]

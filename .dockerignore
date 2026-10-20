@@ -1,0 +1,7 @@
+.git
+.github
+integration/.certs
+*.db
+*.db-*
+config.yaml
+logs
