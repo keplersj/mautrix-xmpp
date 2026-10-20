@@ -40,6 +40,22 @@ func (c *XMPPClient) GetBackfillMaxBatchCount(_ context.Context, portal *bridgev
 	return queue.GetOverride("dm")
 }
 
+// maxSkippedPages bounds how many already-bridged pages a backward fetch
+// pages through before returning.
+const maxSkippedPages = 5
+
+// olderThan drops archived messages that are not older than ts. Messages
+// without a timestamp are kept; bridgev2 cuts them off if needed.
+func olderThan(msgs []*xmppx.ArchivedMessage, ts time.Time) []*xmppx.ArchivedMessage {
+	out := msgs[:0:0]
+	for _, am := range msgs {
+		if am.Timestamp.IsZero() || am.Timestamp.Before(ts) {
+			out = append(out, am)
+		}
+	}
+	return out
+}
+
 // FetchMessages implements bridgev2.BackfillingNetworkAPI using MAM.
 func (c *XMPPClient) FetchMessages(ctx context.Context, params bridgev2.FetchMessagesParams) (*bridgev2.FetchMessagesResponse, error) {
 	if params.ThreadRoot != "" {
@@ -90,13 +106,26 @@ func (c *XMPPClient) FetchMessages(ctx context.Context, params bridgev2.FetchMes
 			q.End = params.AnchorMessage.Timestamp
 		}
 		q.Max = count
-		page, err := s.QueryMAM(ctx, q)
-		if err != nil {
-			return nil, err
+		backward := !params.Forward && params.AnchorMessage != nil
+		for pages := 1; ; pages++ {
+			page, err := s.QueryMAM(ctx, q)
+			if err != nil {
+				return nil, err
+			}
+			archived = page.Messages
+			if backward {
+				// MAM's end bound is inclusive, and bridgev2 rejects a page
+				// with nothing older than the oldest bridged message.
+				archived = olderThan(archived, params.AnchorMessage.Timestamp)
+			}
+			resp.HasMore = !page.Complete && len(page.Messages) > 0
+			resp.Cursor = networkid.PaginationCursor(page.First)
+			if len(archived) > 0 || !resp.HasMore || !backward || pages >= maxSkippedPages {
+				break
+			}
+			// The whole page was already bridged; keep paging back.
+			q.Before, q.BeforeLast, q.End = page.First, false, time.Time{}
 		}
-		archived = page.Messages
-		resp.HasMore = !page.Complete && len(page.Messages) > 0
-		resp.Cursor = networkid.PaginationCursor(page.First)
 	}
 	resp.Messages = c.convertArchive(ctx, params.Portal, archived)
 	resp.MarkRead = false

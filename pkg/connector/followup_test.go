@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/bridgeconfig"
@@ -71,5 +72,22 @@ func TestInitialOccupantsCapped(t *testing.T) {
 		if _, ok := info.Members.MemberMap[networkid.UserID(want)]; !ok {
 			t.Errorf("%s should be prioritized", want)
 		}
+	}
+}
+
+func TestOlderThan(t *testing.T) {
+	anchor := time.Date(2026, 10, 20, 6, 24, 42, 0, time.UTC)
+	msgs := []*xmppx.ArchivedMessage{
+		{ArchiveID: "old", Timestamp: anchor.Add(-time.Hour)},
+		{ArchiveID: "same", Timestamp: anchor},
+		{ArchiveID: "new", Timestamp: anchor.Add(time.Second)},
+		{ArchiveID: "unknown"},
+	}
+	got := olderThan(msgs, anchor)
+	if len(got) != 2 || got[0].ArchiveID != "old" || got[1].ArchiveID != "unknown" {
+		t.Errorf("got %+v", got)
+	}
+	if len(msgs) != 4 || msgs[1].ArchiveID != "same" {
+		t.Error("input must not be modified")
 	}
 }
