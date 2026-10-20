@@ -58,18 +58,19 @@ type aliasStore interface {
 }
 
 var (
-	_ bridgev2.NetworkAPI                    = (*XMPPClient)(nil)
-	_ bridgev2.NetworkAPIWithUserID          = (*XMPPClient)(nil)
-	_ bridgev2.IdentifierResolvingNetworkAPI = (*XMPPClient)(nil)
-	_ bridgev2.ContactListingNetworkAPI      = (*XMPPClient)(nil)
-	_ bridgev2.BackfillingNetworkAPI         = (*XMPPClient)(nil)
-	_ bridgev2.EditHandlingNetworkAPI        = (*XMPPClient)(nil)
-	_ bridgev2.RedactionHandlingNetworkAPI   = (*XMPPClient)(nil)
-	_ bridgev2.ReactionHandlingNetworkAPI    = (*XMPPClient)(nil)
-	_ bridgev2.ReadReceiptHandlingNetworkAPI = (*XMPPClient)(nil)
-	_ bridgev2.TypingHandlingNetworkAPI      = (*XMPPClient)(nil)
-	_ xmppx.Handler                          = (*XMPPClient)(nil)
-	_ xmppx.ManagerEvents                    = (*XMPPClient)(nil)
+	_ bridgev2.NetworkAPI                      = (*XMPPClient)(nil)
+	_ bridgev2.NetworkAPIWithUserID            = (*XMPPClient)(nil)
+	_ bridgev2.IdentifierResolvingNetworkAPI   = (*XMPPClient)(nil)
+	_ bridgev2.ContactListingNetworkAPI        = (*XMPPClient)(nil)
+	_ bridgev2.BackfillingNetworkAPI           = (*XMPPClient)(nil)
+	_ bridgev2.BackfillingNetworkAPIWithLimits = (*XMPPClient)(nil)
+	_ bridgev2.EditHandlingNetworkAPI          = (*XMPPClient)(nil)
+	_ bridgev2.RedactionHandlingNetworkAPI     = (*XMPPClient)(nil)
+	_ bridgev2.ReactionHandlingNetworkAPI      = (*XMPPClient)(nil)
+	_ bridgev2.ReadReceiptHandlingNetworkAPI   = (*XMPPClient)(nil)
+	_ bridgev2.TypingHandlingNetworkAPI        = (*XMPPClient)(nil)
+	_ xmppx.Handler                            = (*XMPPClient)(nil)
+	_ xmppx.ManagerEvents                      = (*XMPPClient)(nil)
 )
 
 func newXMPPClient(main *XMPPConnector, login *bridgev2.UserLogin, account jid.JID, meta *UserLoginMetadata) *XMPPClient {
