@@ -1,0 +1,53 @@
+# Bridge config for the integration tests. Anything not set here falls back to
+# the defaults from the example config (mautrix-xmpp -e).
+network:
+    reconnect:
+        # Long enough that the reconnect test's messages land in MAM first.
+        initial_delay: 5s
+        max_delay: 10s
+    ping_interval: 30s
+bridge:
+    permissions:
+        "matrix.test": admin
+    personal_filtering_spaces: false
+    cleanup_on_logout:
+        enabled: false
+database:
+    type: sqlite3-fk-wal
+    # Relative to the working directory, like bbctl generates it.
+    uri: file:sh-xmpp.db?_txlock=immediate
+homeserver:
+    address: http://synapse:8008
+    domain: matrix.test
+    software: standard
+    websocket: false
+appservice:
+    address: http://bridge:29371
+    hostname: 0.0.0.0
+    port: 29371
+    id: xmpp
+    bot:
+        username: xmppbot
+        displayname: XMPP bridge bot
+    as_token: integration-as-token
+    hs_token: integration-hs-token
+    username_template: xmpp_{{.}}
+provisioning:
+    shared_secret: integration-provisioning-secret
+backfill:
+    enabled: true
+    max_initial_messages: 20
+    max_catchup_messages: 100
+encryption:
+    allow: false
+    default: false
+    require: false
+    pickle_key: integration
+logging:
+    min_level: debug
+    writers:
+        - type: stdout
+          format: pretty
+        - type: file
+          format: json
+          filename: ./logs/bridge.log

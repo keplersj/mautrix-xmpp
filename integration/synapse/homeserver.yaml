@@ -1,0 +1,47 @@
+# Minimal Synapse config for the mautrix-xmpp integration tests.
+server_name: matrix.test
+pid_file: /data/homeserver.pid
+public_baseurl: http://synapse:8008/
+listeners:
+  - port: 8008
+    type: http
+    tls: false
+    x_forwarded: false
+    bind_addresses: ["0.0.0.0"]
+    resources:
+      - names: [client]
+        compress: false
+database:
+  name: sqlite3
+  args:
+    database: /data/homeserver.db
+log_config: /config/log.yaml
+media_store_path: /data/media_store
+signing_key_path: /data/signing.key
+trusted_key_servers: []
+suppress_key_server_warning: true
+report_stats: false
+enable_registration: false
+registration_shared_secret: integration-registration-secret
+macaroon_secret_key: integration-macaroon-secret
+form_secret: integration-form-secret
+app_service_config_files:
+  - /config/appservice.yaml
+federation_domain_whitelist: []
+presence:
+  enabled: false
+url_preview_enabled: false
+rc_message:
+  per_second: 1000
+  burst_count: 1000
+rc_login:
+  address: {per_second: 1000, burst_count: 1000}
+  account: {per_second: 1000, burst_count: 1000}
+  failed_attempts: {per_second: 1000, burst_count: 1000}
+rc_joins:
+  local: {per_second: 1000, burst_count: 1000}
+  remote: {per_second: 1000, burst_count: 1000}
+rc_invites:
+  per_room: {per_second: 1000, burst_count: 1000}
+  per_user: {per_second: 1000, burst_count: 1000}
+  per_issuer: {per_second: 1000, burst_count: 1000}
