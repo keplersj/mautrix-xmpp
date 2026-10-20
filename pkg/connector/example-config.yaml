@@ -1,0 +1,40 @@
+# Prefix for the XMPP resource the bridge binds. A random suffix is added per
+# login, so the user's other clients can tell the bridge apart.
+resource_prefix: mautrix-xmpp
+# How long to wait for TCP, TLS and stream negotiation when connecting.
+connect_timeout: 30s
+# Reconnect backoff after a dropped connection. Each failed attempt doubles the
+# delay, up to max_delay, with ±20% jitter.
+reconnect:
+    initial_delay: 2s
+    max_delay: 5m
+# How often to ping the server to detect dead connections. 0 disables pings.
+ping_interval: 60s
+# Default SOCKS5 proxy for XMPP connections (socks5://host:port or
+# socks5h://host:port to resolve names through the proxy). A per-login proxy
+# set in the login metadata overrides this. Empty means no proxy.
+proxy: ""
+# Presence priority for the bridge's resource. Keep this >= 0, or the server
+# will not deliver messages addressed to the bare JID to the bridge.
+presence_priority: 0
+# Message Archive Management (XEP-0313) settings.
+mam:
+    # Number of messages to request per archive page.
+    page_size: 50
+    # Maximum number of messages to fetch per chat when catching up after the
+    # bridge was disconnected.
+    catchup_max: 500
+# Media limits in bytes. Incoming files larger than the download limit are
+# bridged as a link instead. Outgoing files larger than the upload limit (or the
+# XMPP server's own limit) are rejected.
+media:
+    max_download_size: 104857600
+    max_upload_size: 104857600
+# Send XEP-0333 "displayed" markers when you read messages on Matrix.
+send_read_markers: true
+# Send XEP-0085 typing notifications in 1:1 chats.
+send_typing: true
+# Debug only: log message content. This logs the raw XMPP stream after
+# authentication (at trace level) and stops redacting message bodies from the
+# bridge's Matrix request logs (at debug level). Passwords are never logged.
+log_message_content: false
