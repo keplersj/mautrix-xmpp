@@ -1,0 +1,13 @@
+id: xmpp
+url: http://bridge:29371
+as_token: integration-as-token
+hs_token: integration-hs-token
+sender_localpart: xmppbot
+rate_limited: false
+receive_ephemeral: true
+namespaces:
+  users:
+    - regex: '@xmpp_.*:matrix\.test'
+      exclusive: true
+    - regex: '@xmppbot:matrix\.test'
+      exclusive: true

@@ -1,0 +1,77 @@
+# End-to-end test environment: Prosody (XMPP), Synapse (Matrix), the bridge
+# image and a Go test driver. Run with `make integration` from the repo root.
+#
+# The bridge runs exactly like in production: as uid 10001, with a read-only
+# root filesystem and a read-only config, and /data as the only writable path.
+name: mautrix-xmpp-integration
+
+services:
+  prosody:
+    image: prosodyim/prosody:13.0@sha256:0d4efc7c11018dfd863c9a25495efe706027de357a58a18ef02f8c484fb264ed
+    entrypoint: ["/entrypoint-test.sh"]
+    volumes:
+      - ./prosody/prosody.cfg.lua:/etc/prosody/prosody.cfg.lua:ro
+      - ./prosody/entrypoint.sh:/entrypoint-test.sh:ro
+      - certs:/certs
+    networks:
+      default:
+        aliases: [xmpp.test, conference.xmpp.test, upload.xmpp.test]
+    healthcheck:
+      test: ["CMD", "bash", "-c", "test -f /certs/ca.crt && exec 3<>/dev/tcp/127.0.0.1/5222"]
+      interval: 2s
+      retries: 30
+
+  synapse:
+    image: matrixdotorg/synapse:v1.163.0@sha256:97665cd4539dcf107c69fb6afdb720e1d1c9c09fb2b5701fb13d6c33b22cd8f0
+    entrypoint: ["/config/start.sh"]
+    volumes:
+      - ./synapse:/config:ro
+    tmpfs:
+      - /data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8008/health"]
+      interval: 2s
+      retries: 60
+
+  bridge:
+    image: ${BRIDGE_IMAGE:-mautrix-xmpp:integration}
+    build:
+      context: ..
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /data:uid=10001,gid=10001,mode=0700
+    volumes:
+      - ./bridge/config.yaml:/data/config.yaml:ro
+      - certs:/certs:ro
+    environment:
+      # Trust the throwaway CA of the test XMPP server.
+      SSL_CERT_FILE: /certs/ca.crt
+    depends_on:
+      prosody: {condition: service_healthy}
+      synapse: {condition: service_healthy}
+
+  tester:
+    image: golang:1.26-alpine@sha256:9ce231b28998b32e116927c61aa5c406183061d4f3f2d61b292c88e7f6bdf7ca
+    working_dir: /src
+    command: ["go", "test", "-tags", "integration", "-count=1", "-timeout", "15m", "-v", "./integration/..."]
+    volumes:
+      - ..:/src:ro
+      - certs:/certs:ro
+      - gocache:/root/.cache/go-build
+      - gomod:/go/pkg/mod
+    environment:
+      CGO_ENABLED: "0"
+      GOFLAGS: -buildvcs=false
+      SSL_CERT_FILE: /certs/ca.crt
+      MATRIX_URL: http://synapse:8008
+      MATRIX_SHARED_SECRET: integration-registration-secret
+      XMPP_DOMAIN: xmpp.test
+      XMPP_MUC_DOMAIN: conference.xmpp.test
+    depends_on:
+      bridge: {condition: service_started}
+
+volumes:
+  certs:
+  gocache:
+  gomod:

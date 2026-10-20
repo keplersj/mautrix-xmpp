@@ -1,0 +1,7 @@
+/mautrix-xmpp
+*.db
+*.db-shm
+*.db-wal
+/config.yaml
+/registration.yaml
+/logs/

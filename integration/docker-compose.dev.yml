@@ -1,0 +1,16 @@
+# Just the XMPP server, with ports published to localhost, for running the
+# pkg/xmppx integration tests from the host during development:
+#   docker compose -f integration/docker-compose.dev.yml up -d
+#   XMPPX_TEST_SERVER=localhost:5222 XMPPX_TEST_CA=integration/.certs/ca.crt go test ./pkg/xmppx/...
+services:
+  prosody:
+    image: prosodyim/prosody:13.0
+    entrypoint: ["/entrypoint-test.sh"]
+    volumes:
+      - ./prosody/prosody.cfg.lua:/etc/prosody/prosody.cfg.lua:ro
+      - ./prosody/entrypoint.sh:/entrypoint-test.sh:ro
+      - ./.certs:/certs
+    ports:
+      - "127.0.0.1:5222:5222"
+      - "127.0.0.1:5223:5223"
+      - "127.0.0.1:5281:5281"
