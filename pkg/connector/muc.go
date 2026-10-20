@@ -215,7 +215,9 @@ func (c *XMPPClient) HandlePresence(s *xmppx.Session, p *xmppx.Presence) {
 		}
 		if room.joined {
 			sender, _ := c.occupantSenderLocked(room, from, item.JID)
-			change = &bridgev2.ChatMember{EventSender: sender, Membership: event.MembershipLeave}
+			// Only ghosts that are actually in the Matrix room can leave it. Large
+			// rooms are bridged with a partial member list (see GetChatInfo).
+			change = &bridgev2.ChatMember{EventSender: sender, Membership: event.MembershipLeave, PrevMembership: event.MembershipJoin}
 		}
 	case "", "available":
 		occ := &mucOccupant{nick: nick, affiliation: item.Affiliation, role: item.Role}

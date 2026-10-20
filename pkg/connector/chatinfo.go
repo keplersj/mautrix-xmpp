@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"slices"
 	"strings"
 
 	"maunium.net/go/mautrix/bridgev2"
@@ -86,8 +87,9 @@ func (c *XMPPClient) GetChatInfo(ctx context.Context, portal *bridgev2.Portal) (
 		info.Topic = room.subject
 	}
 	info.CanBackfill = room.mam
-	for nick, occ := range room.occupants {
-		occJID, err := room.jid.WithResource(nick)
+	info.Members.TotalMemberCount = len(room.occupants)
+	for _, occ := range initialOccupants(room) {
+		occJID, err := room.jid.WithResource(occ.nick)
 		if err != nil {
 			continue
 		}
@@ -99,6 +101,44 @@ func (c *XMPPClient) GetChatInfo(ctx context.Context, portal *bridgev2.Portal) (
 		info.Members.MemberMap.Add(bridgev2.ChatMember{EventSender: sender, Membership: event.MembershipJoin, Nickname: &n})
 	}
 	return info, nil
+}
+
+// maxInitialOccupants caps the member list synced for a group chat. Each new
+// ghost costs a few homeserver requests, so syncing every occupant of a big
+// public room makes bridging it take minutes. Other occupants get a ghost when
+// they talk or join.
+const maxInitialOccupants = 50
+
+// initialOccupants returns the occupants to put in the room's member list:
+// affiliated users first (owners, admins, members), then those with a known
+// real JID, then by nick for a stable order.
+func initialOccupants(room *mucRoom) []*mucOccupant {
+	rank := func(o *mucOccupant) int {
+		r := 0
+		switch o.affiliation {
+		case "owner", "admin", "member":
+		default:
+			r += 2
+		}
+		if o.realJID.Equal(jid.JID{}) {
+			r++
+		}
+		return r
+	}
+	occs := make([]*mucOccupant, 0, len(room.occupants))
+	for _, o := range room.occupants {
+		occs = append(occs, o)
+	}
+	slices.SortFunc(occs, func(a, b *mucOccupant) int {
+		if d := rank(a) - rank(b); d != 0 {
+			return d
+		}
+		return strings.Compare(a.nick, b.nick)
+	})
+	if len(occs) > maxInitialOccupants {
+		occs = occs[:maxInitialOccupants]
+	}
+	return occs
 }
 
 func (c *XMPPClient) dmChatInfo(contact jid.JID) *bridgev2.ChatInfo {

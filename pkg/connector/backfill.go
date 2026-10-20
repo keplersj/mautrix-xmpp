@@ -6,6 +6,7 @@ import (
 
 	"github.com/rs/zerolog"
 	"maunium.net/go/mautrix/bridgev2"
+	"maunium.net/go/mautrix/bridgev2/database"
 	"maunium.net/go/mautrix/bridgev2/networkid"
 
 	"github.com/keplersj/mautrix-xmpp/pkg/xmppx"
@@ -25,6 +26,18 @@ func (c *XMPPClient) archiveQuery(portal *bridgev2.Portal) (xmppx.MAMQuery, bool
 		return xmppx.MAMQuery{Archive: j.String()}, room != nil && room.mam, nil
 	}
 	return xmppx.MAMQuery{With: j.String()}, c.accountMAM, nil
+}
+
+// GetBackfillMaxBatchCount implements bridgev2.BackfillingNetworkAPIWithLimits
+// using the backfill.queue.max_batches_override keys bbctl generates: "dm"
+// for 1:1 chats and "channel" for group chats. Without this, bbctl's
+// max_batches: 0 leaves every queue task undone and redispatched forever.
+func (c *XMPPClient) GetBackfillMaxBatchCount(_ context.Context, portal *bridgev2.Portal, _ *database.BackfillTask) int {
+	queue := c.main.br.Config.Backfill.Queue
+	if _, isMUC, _ := parsePortalID(portal.ID); isMUC {
+		return queue.GetOverride("channel", "group")
+	}
+	return queue.GetOverride("dm")
 }
 
 // FetchMessages implements bridgev2.BackfillingNetworkAPI using MAM.
