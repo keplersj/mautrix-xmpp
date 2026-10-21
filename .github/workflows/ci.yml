@@ -15,7 +15,7 @@ env:
 
 jobs:
   test:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
@@ -31,7 +31,7 @@ jobs:
           version: v2.15.0
 
   integration:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
       - name: Run end-to-end test (Prosody + Synapse + bridge image)
@@ -43,7 +43,7 @@ jobs:
   image:
     # Multi-arch build on every run; pushed only for version tags.
     needs: [test, integration]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
       packages: write
