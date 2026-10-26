@@ -60,7 +60,12 @@ above, which keeps parsing in one place and makes conversion unit-testable witho
 - `pkg/connector`: the bridgev2 `NetworkConnector`/`NetworkAPI`, login, ID mapping, message
   conversion, backfill.
 - `pkg/xmppx`: the XMPP client session (dialing, TLS, SASL, stream management, reconnect) and
-  the extension element types.
+  the extension element types. It reports protocol events through the small `xmppx.Observer`
+  interface and doesn't import Prometheus itself.
+- `pkg/metrics`: the Prometheus metrics and the optional HTTP listener for `/metrics`,
+  `/healthz`, `/readyz` and pprof. bridgev2 only serves pprof on the appservice HTTP server,
+  which doesn't run in websocket mode (bbctl), so the bridge needs its own listener. It binds
+  in `Init`, before the Matrix connection, so health checks answer while startup is stuck.
 - **cgo is required, but the binary is still static.** The plan was a pure-Go SQLite driver,
   but bridgev2's runner (`mxmain`) references `mattn/go-sqlite3` error types that only exist
   in cgo builds, so a `CGO_ENABLED=0` build would mean forking `mxmain`. Instead the image

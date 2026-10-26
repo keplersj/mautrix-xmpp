@@ -38,3 +38,15 @@ send_typing: true
 # authentication (at trace level) and stops redacting message bodies from the
 # bridge's Matrix request logs (at debug level). Passwords are never logged.
 log_message_content: false
+# Prometheus metrics and health checks, served over plain HTTP on their own
+# listener. In websocket mode (as with bbctl) the bridge has no other local
+# HTTP server, so this is the only way to scrape it.
+metrics:
+    enabled: false
+    # Address to listen on. Keep this on localhost or a private network: the
+    # endpoints have no authentication. In a container, use 0.0.0.0:8001.
+    listen: 127.0.0.1:8001
+    # Also serve Go profiling data at /debug/pprof/, for example for Pyroscope.
+    # Profiling requests are unauthenticated and can be expensive, so only
+    # enable this on a trusted network.
+    pprof: false

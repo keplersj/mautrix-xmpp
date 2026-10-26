@@ -12,6 +12,8 @@ import (
 	"github.com/rs/zerolog"
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/event"
+
+	"github.com/keplersj/mautrix-xmpp/pkg/metrics"
 )
 
 var evtTypeMessage = event.EventMessage
@@ -68,11 +70,14 @@ func (c *XMPPClient) convertAttachment(ctx context.Context, portal *bridgev2.Por
 	}
 	data, header, err := downloadFile(ctx, att.URL, c.main.Config.Media.MaxDownloadSize)
 	if errors.Is(err, errTooLarge) {
+		c.main.metrics.MediaTransfer(metrics.MediaDownload, metrics.MediaTooLarge, 0)
 		return fallback("file too large to bridge")
 	} else if err != nil {
+		c.main.metrics.MediaTransfer(metrics.MediaDownload, metrics.MediaFailed, 0)
 		log.Warn().Err(err).Msg("Failed to download attachment")
 		return fallback("")
 	}
+	c.main.metrics.MediaTransfer(metrics.MediaDownload, metrics.MediaOK, len(data))
 	mimeType := guessMime(header, fileName)
 	content := &event.MessageEventContent{
 		MsgType: msgTypeForMime(mimeType),
@@ -93,6 +98,8 @@ func (c *XMPPClient) convertAttachment(ctx context.Context, portal *bridgev2.Por
 
 // uploadToXMPP uploads a file with XEP-0363 and returns its download URL.
 func (c *XMPPClient) uploadToXMPP(ctx context.Context, data []byte, fileName, mimeType string) (string, error) {
+	result := metrics.MediaFailed
+	defer func() { c.main.metrics.MediaTransfer(metrics.MediaUpload, result, len(data)) }()
 	s, err := c.session()
 	if err != nil {
 		return "", err
@@ -105,9 +112,11 @@ func (c *XMPPClient) uploadToXMPP(ctx context.Context, data []byte, fileName, mi
 	}
 	size := int64(len(data))
 	if svc.MaxFileSize > 0 && size > svc.MaxFileSize {
+		result = metrics.MediaTooLarge
 		return "", fmt.Errorf("file is larger than the server's upload limit (%d bytes)", svc.MaxFileSize)
 	}
 	if size > c.main.Config.Media.MaxUploadSize {
+		result = metrics.MediaTooLarge
 		return "", fmt.Errorf("file is larger than the bridge's upload limit (%d bytes)", c.main.Config.Media.MaxUploadSize)
 	}
 	slot, err := s.RequestUploadSlot(ctx, svc.JID, fileName, size, mimeType)
@@ -131,5 +140,6 @@ func (c *XMPPClient) uploadToXMPP(ctx context.Context, data []byte, fileName, mi
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("upload failed with HTTP status %s", resp.Status)
 	}
+	result = metrics.MediaOK
 	return slot.Get.URL, nil
 }

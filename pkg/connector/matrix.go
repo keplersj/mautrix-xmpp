@@ -13,6 +13,7 @@ import (
 	"maunium.net/go/mautrix/event"
 	"mellium.im/xmpp/jid"
 
+	"github.com/keplersj/mautrix-xmpp/pkg/metrics"
 	"github.com/keplersj/mautrix-xmpp/pkg/xmppx"
 )
 
@@ -72,17 +73,36 @@ func (c *XMPPClient) send(ctx context.Context, msg *xmppx.Message) error {
 }
 
 func (c *XMPPClient) sendViaSession(ctx context.Context, msg *xmppx.Message, waitAck bool) error {
+	start := time.Now()
+	// Only sends that wait for an ack are timed: those are the messages,
+	// edits and reactions, not typing notifications and read markers.
+	record := func(result string) {
+		if waitAck {
+			c.main.metrics.MatrixSend(result, time.Since(start))
+		}
+	}
 	s, err := c.session()
 	if err != nil {
+		record(metrics.SendNotConnected)
 		return err
 	}
-	if err = s.SendMessage(ctx, msg); err != nil || !waitAck {
+	if err = s.SendMessage(ctx, msg); err != nil {
+		record(metrics.SendFailed)
 		return err
+	} else if !waitAck {
+		return nil
 	}
 	ackCtx, cancel := context.WithTimeout(ctx, ackTimeout)
 	defer cancel()
-	if !s.WaitAck(ackCtx, msg.ID) && s.StreamManagementEnabled() {
+	switch {
+	case !s.StreamManagementEnabled():
+		// Without XEP-0198 the server can't confirm anything.
+		record(metrics.SendUnconfirmed)
+	case !s.WaitAck(ackCtx, msg.ID):
 		zerolog.Ctx(ctx).Warn().Str("xmpp_id", msg.ID).Msg("Server did not acknowledge message in time, it will be re-sent after reconnecting if needed")
+		record(metrics.SendAckTimeout)
+	default:
+		record(metrics.SendOK)
 	}
 	return nil
 }

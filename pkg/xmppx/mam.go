@@ -161,12 +161,13 @@ func (s *Session) QueryMAM(ctx context.Context, q MAMQuery) (*MAMPage, error) {
 	}()
 
 	var fin mamFin
-	if err := s.IQ(ctx, "set", q.Archive, elem, &fin); err != nil {
+	if err := s.iq(ctx, IQOpMAM, "set", q.Archive, elem, &fin); err != nil {
 		return nil, err
 	}
 	s.mam.mu.Lock()
 	results := c.results
 	s.mam.mu.Unlock()
+	s.obs.MAMPage(len(results))
 	return &MAMPage{
 		Messages: results,
 		First:    fin.Set.First,

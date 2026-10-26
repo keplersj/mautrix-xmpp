@@ -78,7 +78,7 @@ func (u *UploadSlot) PutHeaders() map[string]string {
 // RequestUploadSlot asks the upload service for a slot.
 func (s *Session) RequestUploadSlot(ctx context.Context, service, filename string, size int64, contentType string) (*UploadSlot, error) {
 	var slot UploadSlot
-	err := s.IQ(ctx, "get", service, uploadRequest{Filename: filename, Size: size, ContentType: contentType}, &slot)
+	err := s.iq(ctx, IQOpUploadSlot, "get", service, uploadRequest{Filename: filename, Size: size, ContentType: contentType}, &slot)
 	if err != nil {
 		return nil, err
 	}

@@ -1,0 +1,123 @@
+# Unit tests for alerts.yaml: promtool test rules contrib/grafana/alerts_test.yaml
+rule_files:
+  - alerts.yaml
+
+evaluation_interval: 1m
+
+tests:
+  - name: bridge down
+    interval: 1m
+    input_series:
+      - series: 'up{job="mautrix-xmpp", instance="bridge:8001"}'
+        values: "1 0x10"
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: MautrixXMPPDown
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: MautrixXMPPDown
+        exp_alerts:
+          - exp_labels: {severity: critical, job: mautrix-xmpp, instance: "bridge:8001"}
+            exp_annotations:
+              summary: mautrix-xmpp is not answering metric scrapes
+              description: "bridge:8001 has been unreachable for 5 minutes."
+
+  - name: login stuck in backoff fires even though its state flips
+    interval: 1m
+    input_series:
+      # One login alternating between connecting and disconnected.
+      - series: 'mautrix_xmpp_logins{job="mautrix-xmpp", instance="bridge:8001", state="connecting"}'
+        values: "1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0"
+      - series: 'mautrix_xmpp_logins{job="mautrix-xmpp", instance="bridge:8001", state="disconnected"}'
+        values: "0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1"
+      - series: 'mautrix_xmpp_logins{job="mautrix-xmpp", instance="bridge:8001", state="connected"}'
+        values: "0x19"
+    alert_rule_test:
+      - eval_time: 16m
+        alertname: MautrixXMPPLoginDisconnected
+        exp_alerts:
+          - exp_labels: {severity: warning, job: mautrix-xmpp, instance: "bridge:8001"}
+            exp_annotations:
+              summary: XMPP accounts can't stay connected
+              description: "1 login(s) on bridge:8001 have not been connected for 15 minutes. Check mautrix_xmpp_disconnects_total by reason, and the bridge logs."
+
+  - name: healthy bridge stays quiet
+    interval: 1m
+    input_series:
+      - series: 'up{job="mautrix-xmpp", instance="bridge:8001"}'
+        values: "1x30"
+      - series: 'mautrix_xmpp_logins{job="mautrix-xmpp", instance="bridge:8001", state="connected"}'
+        values: "2x30"
+      - series: 'mautrix_xmpp_logins{job="mautrix-xmpp", instance="bridge:8001", state="disconnected"}'
+        values: "0x30"
+      - series: 'mautrix_xmpp_unacked_stanzas{job="mautrix-xmpp", instance="bridge:8001"}'
+        values: "3x30"
+      - series: 'mautrix_xmpp_matrix_send_duration_seconds_count{job="mautrix-xmpp", instance="bridge:8001", result="ok"}'
+        values: "0+10x30"
+      - series: 'mautrix_xmpp_matrix_send_duration_seconds_count{job="mautrix-xmpp", instance="bridge:8001", result="unconfirmed"}'
+        values: "0+10x30"
+    alert_rule_test:
+      - {eval_time: 30m, alertname: MautrixXMPPDown, exp_alerts: []}
+      - {eval_time: 30m, alertname: MautrixXMPPLoginDisconnected, exp_alerts: []}
+      - {eval_time: 30m, alertname: MautrixXMPPUnackedBacklog, exp_alerts: []}
+      - {eval_time: 30m, alertname: MautrixXMPPSendFailures, exp_alerts: []}
+
+  - name: bad credentials
+    interval: 1m
+    input_series:
+      - series: 'mautrix_xmpp_logins{job="mautrix-xmpp", instance="bridge:8001", state="bad_credentials"}'
+        values: "1x10"
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: MautrixXMPPBadCredentials
+        exp_alerts:
+          - exp_labels: {severity: warning, job: mautrix-xmpp, instance: "bridge:8001"}
+            exp_annotations:
+              summary: An XMPP server rejected a bridged account's password
+              description: "1 login(s) on bridge:8001 need to log in again. The bridge will not retry them."
+
+  - name: flapping, but bad credentials don't count
+    interval: 1m
+    input_series:
+      - series: 'mautrix_xmpp_disconnects_total{job="mautrix-xmpp", instance="bridge:8001", reason="eof"}'
+        values: "0+1x20"
+      - series: 'mautrix_xmpp_disconnects_total{job="mautrix-xmpp", instance="other:8001", reason="bad_credentials"}'
+        values: "0+5x20"
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: MautrixXMPPDisconnectStorm
+        exp_alerts:
+          - exp_labels: {severity: warning, job: mautrix-xmpp, instance: "bridge:8001"}
+            exp_annotations:
+              summary: XMPP connections are flapping
+              description: "bridge:8001 lost XMPP connections 15 times in 15 minutes."
+
+  - name: unacked backlog
+    interval: 1m
+    input_series:
+      - series: 'mautrix_xmpp_unacked_stanzas{job="mautrix-xmpp", instance="bridge:8001"}'
+        values: "80x15"
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: MautrixXMPPUnackedBacklog
+        exp_alerts:
+          - exp_labels: {severity: warning, job: mautrix-xmpp, instance: "bridge:8001"}
+            exp_annotations:
+              summary: The XMPP server is not acknowledging stanzas
+              description: "80 outbound stanzas on bridge:8001 have waited for a stream management ack for over 10 minutes."
+
+  - name: send failures
+    interval: 1m
+    input_series:
+      - series: 'mautrix_xmpp_matrix_send_duration_seconds_count{job="mautrix-xmpp", instance="bridge:8001", result="ok"}'
+        values: "0+6x40"
+      - series: 'mautrix_xmpp_matrix_send_duration_seconds_count{job="mautrix-xmpp", instance="bridge:8001", result="ack_timeout"}'
+        values: "0+4x40"
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: MautrixXMPPSendFailures
+        exp_alerts:
+          - exp_labels: {severity: warning, job: mautrix-xmpp, instance: "bridge:8001"}
+            exp_annotations:
+              summary: Messages from Matrix are failing to reach XMPP
+              description: "40% of sends on bridge:8001 failed or were not acknowledged over the last 15 minutes."

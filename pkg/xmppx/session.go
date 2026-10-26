@@ -49,6 +49,8 @@ type Config struct {
 	LogMessageContent bool
 	// SoftwareName and SoftwareVersion are returned for XEP-0092 queries.
 	SoftwareName, SoftwareVersion string
+	// Observer optionally receives protocol events for metrics.
+	Observer Observer
 }
 
 // Handler receives inbound stanzas. Calls are made from a single goroutine in
@@ -130,6 +132,7 @@ type Session struct {
 	xs      *xmpp.Session
 	conn    net.Conn
 	handler Handler
+	obs     Observer
 	sm      *streamMgmt
 	smOffer bool
 
@@ -209,6 +212,7 @@ func Connect(ctx context.Context, cfg *Config, log zerolog.Logger, handler Handl
 		log:     log,
 		conn:    conn,
 		handler: handler,
+		obs:     cfg.observer(),
 		sm:      newStreamMgmt(),
 		queue:   newDispatchQueue(),
 		mam:     mamState{queries: make(map[string]*mamCollector)},
@@ -220,8 +224,20 @@ func Connect(ctx context.Context, cfg *Config, log zerolog.Logger, handler Handl
 		l := log.With().Str("component", "xmpp-stream").Logger()
 		stanzaLog = &l
 	}
-	teeIn := &teeWriter{scanner: newStanzaScanner(false, s.sm.handleIn), ready: &s.ready, log: stanzaLog, dir: "in"}
-	teeOut := &teeWriter{scanner: newStanzaScanner(true, s.sm.handleOut), ready: &s.ready, log: stanzaLog, dir: "out"}
+	scanIn := func(el *topLevelElement) {
+		s.sm.handleIn(el)
+		if isStanzaName(el.Name) {
+			s.obs.Stanza(false, el.Name)
+		}
+	}
+	scanOut := func(el *topLevelElement) {
+		s.sm.handleOut(el)
+		if isStanzaName(el.Name) {
+			s.obs.Stanza(true, el.Name)
+		}
+	}
+	teeIn := &teeWriter{scanner: newStanzaScanner(false, scanIn), ready: &s.ready, log: stanzaLog, dir: "in"}
+	teeOut := &teeWriter{scanner: newStanzaScanner(true, scanOut), ready: &s.ready, log: stanzaLog, dir: "out"}
 
 	tlsCfg := tlsConfigFor(cfg.TLSConfig, cfg.JID.Domainpart())
 	origin, err := cfg.JID.WithResource(cfg.Resource)
@@ -281,6 +297,7 @@ func Connect(ctx context.Context, cfg *Config, log zerolog.Logger, handler Handl
 		}
 	}
 	if len(prevUnacked) > 0 {
+		s.obs.Resent(len(prevUnacked))
 		s.log.Info().Int("count", len(prevUnacked)).Msg("Re-sent messages the previous session did not get acknowledged")
 		s.RequestAck(dialCtx)
 	}
@@ -585,6 +602,11 @@ type outgoingIQ struct {
 // decodes the first child of the result into resp (if not nil). Error results
 // are returned as stanza.Error.
 func (s *Session) IQ(ctx context.Context, typ string, to string, payload any, resp any) error {
+	return s.iq(ctx, IQOpOther, typ, to, payload, resp)
+}
+
+// iq is IQ with the operation name reported to the Observer.
+func (s *Session) iq(ctx context.Context, op, typ, to string, payload, resp any) error {
 	var buf bytes.Buffer
 	if err := xml.NewEncoder(&buf).Encode(outgoingIQ{ID: RandomID(), Type: typ, To: to, Payload: payload}); err != nil {
 		return fmt.Errorf("failed to encode IQ: %w", err)
@@ -605,7 +627,10 @@ func (s *Session) IQ(ctx context.Context, typ string, to string, payload any, re
 		case <-ctx.Done():
 		}
 	}()
-	return s.xs.UnmarshalIQ(ctx, rawTokenReader{xml.NewDecoder(&buf)}, resp)
+	start := time.Now()
+	err := s.xs.UnmarshalIQ(ctx, rawTokenReader{xml.NewDecoder(&buf)}, resp)
+	s.obs.IQDone(op, time.Since(start), err)
+	return err
 }
 
 // IsStanzaError reports whether err is an XMPP stanza error with the given
@@ -621,7 +646,7 @@ func IsStanzaError(err error, condition string) bool {
 
 // Ping sends a XEP-0199 ping to the server.
 func (s *Session) Ping(ctx context.Context) error {
-	err := s.IQ(ctx, "get", s.bound.Domain().String(), struct {
+	err := s.iq(ctx, IQOpPing, "get", s.bound.Domain().String(), struct {
 		XMLName xml.Name `xml:"urn:xmpp:ping ping"`
 	}{}, nil)
 	if err != nil && IsStanzaError(err, "") {
@@ -632,11 +657,11 @@ func (s *Session) Ping(ctx context.Context) error {
 }
 
 // IsStreamError reports whether err is a stream error with the given
-// condition.
+// condition. An empty condition matches any stream error.
 func IsStreamError(err error, condition string) bool {
 	var se stream.Error
 	if !errors.As(err, &se) {
 		return false
 	}
-	return se.Err == condition
+	return condition == "" || se.Err == condition
 }
