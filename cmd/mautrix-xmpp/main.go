@@ -20,7 +20,7 @@ const version = "0.1.0"
 
 func main() {
 	preflight()
-	c := &connector.XMPPConnector{Version: version}
+	c := &connector.XMPPConnector{Version: version, Commit: Commit}
 	m := mxmain.BridgeMain{
 		Name:        "mautrix-xmpp",
 		Description: "A Matrix-XMPP puppeting bridge",

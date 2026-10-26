@@ -3,13 +3,17 @@ package connector
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
+	"github.com/rs/zerolog"
 	"go.mau.fi/util/configupgrade"
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/database"
 	"maunium.net/go/mautrix/bridgev2/networkid"
 	"mellium.im/xmpp/jid"
+
+	"github.com/keplersj/mautrix-xmpp/pkg/metrics"
 )
 
 // XMPPConnector implements bridgev2.NetworkConnector.
@@ -18,8 +22,13 @@ type XMPPConnector struct {
 	Config Config
 	db     *aliasDB
 
+	metrics       *metrics.Metrics
+	metricsServer *metrics.Server
+
 	// Version is reported in XEP-0092 software version replies.
 	Version string
+	// Commit is reported in the build_info metric.
+	Commit string
 }
 
 var (
@@ -27,18 +36,62 @@ var (
 	_ bridgev2.ConfigValidatingNetwork     = (*XMPPConnector)(nil)
 	_ bridgev2.IdentifierValidatingNetwork = (*XMPPConnector)(nil)
 	_ bridgev2.MaxFileSizeingNetwork       = (*XMPPConnector)(nil)
+	_ bridgev2.StoppableNetwork            = (*XMPPConnector)(nil)
 )
 
 func (xc *XMPPConnector) Init(br *bridgev2.Bridge) {
 	xc.br = br
 	xc.db = newAliasDB(br.DB.Database, br.Log.With().Str("db_section", "xmpp").Logger())
+	xc.metrics = metrics.New(xc.Version, xc.Commit)
+	xc.metrics.SetSnapshotFunc(xc.metricsSnapshot)
+	if xc.Config.Metrics.Enabled {
+		// Listen here rather than in Start, which only runs once the Matrix
+		// connection is up: health checks and metrics should work while the
+		// bridge is stuck waiting for the homeserver.
+		// Init can't return an error, so exit like mxmain does for other
+		// startup failures.
+		log := br.Log.With().Str("component", "metrics").Logger()
+		srv, err := metrics.Listen(xc.Config.Metrics.Listen, xc.metrics, xc.Config.Metrics.Pprof, log)
+		if err != nil {
+			log.WithLevel(zerolog.FatalLevel).Err(err).Str("address", xc.Config.Metrics.Listen).Msg("Failed to listen for metrics")
+			os.Exit(1)
+		}
+		xc.metricsServer = srv
+		srv.Serve()
+	}
 }
 
 func (xc *XMPPConnector) Start(ctx context.Context) error {
 	if err := xc.db.Upgrade(ctx); err != nil {
 		return bridgev2.DBUpgradeError{Err: err, Section: "xmpp"}
 	}
+	if xc.metricsServer != nil {
+		xc.metricsServer.SetReady(true)
+	}
 	return nil
+}
+
+// Stop implements bridgev2.StoppableNetwork.
+func (xc *XMPPConnector) Stop() {
+	if xc.metricsServer != nil {
+		xc.metricsServer.Close()
+	}
+}
+
+// metricsSnapshot reports per-login state for the metrics scrape.
+func (xc *XMPPConnector) metricsSnapshot() metrics.Snapshot {
+	snap := metrics.Snapshot{Logins: make(map[string]int)}
+	for _, login := range xc.br.GetAllCachedUserLogins() {
+		c, ok := login.Client.(*XMPPClient)
+		if !ok || c == nil {
+			continue
+		}
+		snap.Logins[c.metricsState()]++
+		if s := c.mgr.Session(); s != nil {
+			snap.Unacked += s.PendingAcks()
+		}
+	}
+	return snap
 }
 
 func (xc *XMPPConnector) GetName() bridgev2.BridgeName {

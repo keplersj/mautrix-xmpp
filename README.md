@@ -117,6 +117,8 @@ The `network:` section (see the [example](pkg/connector/example-config.yaml)):
 | `media.max_download_size` / `max_upload_size` | 100 MiB | File limits (uploads also capped by the server) |
 | `send_read_markers`, `send_typing` | `true` | Send XEP-0333 markers and XEP-0085 typing |
 | `log_message_content` | `false` | Debug only: log XMPP stanzas and Matrix request bodies |
+| `metrics.enabled` / `listen` | `false` / `127.0.0.1:8001` | Serve Prometheus metrics and health checks (see [Monitoring](#monitoring)) |
+| `metrics.pprof` | `false` | Also serve Go profiles at `/debug/pprof/` |
 
 Logs go to stdout through bridgev2's `logging` config. Passwords are never logged, and message
 bodies aren't logged unless `log_message_content` is on, even at debug level.
@@ -135,7 +137,7 @@ version tags (`v0.1.0` → `0.1.0`, `0.1`), and each release is also tagged
 | Config | `/data/config.yaml`, may be **read-only** (detected; upgrades are applied in memory only) |
 | Writable paths | only `/data` (SQLite DB `sh-xmpp.db` from bbctl's config, `logs/`); works with `--read-only` |
 | Working directory | `/data` (bbctl's relative database and log paths resolve there) |
-| Ports | none with bbctl (websocket to the homeserver) |
+| Ports | none with bbctl (websocket to the homeserver); optional metrics port, see [Monitoring](#monitoring) |
 | Base | `distroless/static`, static binary, no shell |
 
 Example with the [beeper-bridges Helm chart](https://github.com/keplersj/helm-charts):
@@ -150,6 +152,77 @@ externalBridges:
 
 If the config is missing or unreadable, the bridge exits with code 10 and a message explaining
 how to generate one.
+
+## Monitoring
+
+With `network.metrics.enabled: true` the bridge serves plain HTTP on `network.metrics.listen`.
+The endpoints have no authentication, so keep the listener on localhost or a private network.
+Inside a container, set `listen: 0.0.0.0:8001` so it is reachable from outside the container.
+If the address can't be bound, the bridge exits with code 1 at startup.
+
+| Path | |
+|---|---|
+| `/metrics` | Prometheus metrics |
+| `/healthz` | Liveness: `200` whenever the process is serving |
+| `/readyz` | Readiness: `503` until startup finishes (including connecting to Matrix), then `200` |
+| `/debug/pprof/` | Go profiles, only with `metrics.pprof: true` (for example for Pyroscope) |
+
+Neither health check looks at XMPP connections, so one account with a wrong password doesn't make
+the bridge unhealthy. Use the `mautrix_xmpp_logins` metric for that. The image has no shell or
+curl, so use an HTTP probe, for example in Kubernetes:
+
+```yaml
+livenessProbe: {httpGet: {path: /healthz, port: 8001}}
+readinessProbe: {httpGet: {path: /readyz, port: 8001}}
+```
+
+Metrics (all prefixed `mautrix_xmpp_`). Labels never contain JIDs, room or server names, or
+error text:
+
+| Metric | Type | Labels |
+|---|---|---|
+| `build_info` | gauge | `version`, `commit` |
+| `logins` | gauge | `state`: `connecting`, `connected`, `disconnected`, `bad_credentials`, `stopped` |
+| `connect_attempts_total` | counter | |
+| `disconnects_total` | counter | `reason`: `bad_credentials`, `auth_temporary`, `tls`, `stream_conflict`, `stream_error`, `timeout`, `network`, `eof`, `other` |
+| `stanzas_total` | counter | `direction` (`in`, `out`), `kind` (`message`, `presence`, `iq`) |
+| `iq_duration_seconds` | histogram | `op` (`ping`, `mam`, `upload_slot`, `other`), `result` (`ok`, `error`, `timeout`, `failed`) |
+| `unacked_stanzas` | gauge | Outbound stanzas waiting for a XEP-0198 ack, all sessions |
+| `resent_messages_total` | counter | Unacknowledged messages re-sent after a reconnect |
+| `matrix_send_duration_seconds` | histogram | `result` (`ok`, `ack_timeout`, `unconfirmed`, `not_connected`, `failed`); includes the up to 10 s ack wait. `unconfirmed` means the server has no stream management to ack with |
+| `mam_messages_total` | counter | Messages fetched from archives |
+| `media_transfers_total` | counter | `direction` (`download`, `upload`), `result` (`ok`, `too_large`, `failed`) |
+| `media_bytes_total` | counter | `direction` |
+
+The standard `go_*` and `process_*` metrics are included too. Scrape it with Prometheus:
+
+```yaml
+scrape_configs:
+  - job_name: mautrix-xmpp
+    static_configs:
+      - targets: ["bridge:8001"]
+```
+
+### Grafana
+
+[`contrib/grafana`](contrib/grafana) has:
+
+- [`dashboard.json`](contrib/grafana/dashboard.json): import it in Grafana (Dashboards → New →
+  Import) or provision it. It covers connection states and disconnect reasons, Matrix → XMPP
+  send latency and results, stanza and IQ traffic, stream management acks, archive and media
+  transfers, and process stats. It asks for a Prometheus data source and, for the collapsed
+  log panel, an optional Loki one.
+- [`alerts.yaml`](contrib/grafana/alerts.yaml): Prometheus alerting rules. Load them into
+  Prometheus, the Mimir or Grafana Cloud ruler, or import them as Grafana-managed alerts. They
+  cover the bridge being down, logins stuck disconnected, rejected passwords, flapping
+  connections, a growing ack backlog and failing sends.
+- [`config.alloy`](contrib/grafana/config.alloy): a Grafana Alloy config that scrapes metrics
+  (to Prometheus or Mimir), profiles (to Pyroscope, needs `metrics.pprof: true`) and the
+  container's JSON logs (to Loki).
+
+The dashboard and alerts expect the scrape job to be named `mautrix-xmpp`. `make check-grafana`
+parses every dashboard query and alert rule with promtool and runs the alert unit tests in
+[`alerts_test.yaml`](contrib/grafana/alerts_test.yaml) (needs Docker). CI runs it too.
 
 ## Development
 

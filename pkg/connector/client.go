@@ -15,6 +15,7 @@ import (
 	"maunium.net/go/mautrix/bridgev2/status"
 	"mellium.im/xmpp/jid"
 
+	"github.com/keplersj/mautrix-xmpp/pkg/metrics"
 	"github.com/keplersj/mautrix-xmpp/pkg/xmppx"
 )
 
@@ -29,6 +30,9 @@ type XMPPClient struct {
 
 	badCredentials atomic.Bool
 	connected      atomic.Bool
+	// state is the connection state for the logins metric, one of the
+	// metrics.State* constants.
+	state atomic.Pointer[string]
 
 	mu         sync.Mutex
 	roster     map[string]xmppx.RosterItem
@@ -103,6 +107,7 @@ func newXMPPClient(main *XMPPConnector, login *bridgev2.UserLogin, account jid.J
 		LogMessageContent: main.Config.LogMessageContent,
 		SoftwareName:      "mautrix-xmpp",
 		SoftwareVersion:   main.Version,
+		Observer:          main.metrics,
 	}
 	c.mgr = xmppx.NewManager(cfg, xmppx.ManagerConfig{
 		InitialDelay: time.Duration(main.Config.Reconnect.InitialDelay),
@@ -127,10 +132,25 @@ func (c *XMPPClient) Connect(ctx context.Context) {
 	c.mgr.Start()
 }
 
+func (c *XMPPClient) setState(state string) { c.state.Store(&state) }
+
+// metricsState returns the connection state for the logins metric.
+func (c *XMPPClient) metricsState() string {
+	if c.badCredentials.Load() {
+		return metrics.StateBadCredentials
+	}
+	if s := c.state.Load(); s != nil {
+		return *s
+	}
+	return metrics.StateStopped
+}
+
 // Disconnect closes the connection and stops reconnecting.
 func (c *XMPPClient) Disconnect() {
 	c.mgr.Stop()
 	c.connected.Store(false)
+	// After Stop returns no more manager callbacks can overwrite this.
+	c.setState(metrics.StateStopped)
 	c.mu.Lock()
 	if c.stopSaver != nil {
 		close(c.stopSaver)
@@ -172,6 +192,8 @@ func (c *XMPPClient) session() (*xmppx.Session, error) {
 var errNotConnected = errors.New("not connected to the XMPP server")
 
 func (c *XMPPClient) OnConnecting(attempt int) {
+	c.setState(metrics.StateConnecting)
+	c.main.metrics.ConnectAttempt()
 	if attempt == 1 {
 		c.login.BridgeState.Send(status.BridgeState{StateEvent: status.StateConnecting})
 	}
@@ -179,6 +201,8 @@ func (c *XMPPClient) OnConnecting(attempt int) {
 
 func (c *XMPPClient) OnDisconnected(err error, retryIn time.Duration) {
 	c.connected.Store(false)
+	c.setState(metrics.StateDisconnected)
+	c.main.metrics.Disconnect(metrics.DisconnectReason(err))
 	c.log.Warn().Err(err).Dur("retry_in", retryIn).Msg("Disconnected from XMPP server")
 	st := status.BridgeState{
 		StateEvent: status.StateTransientDisconnect,
@@ -204,6 +228,7 @@ func (c *XMPPClient) OnDisconnected(err error, retryIn time.Duration) {
 func (c *XMPPClient) OnFatal(err error) {
 	c.connected.Store(false)
 	c.badCredentials.Store(true)
+	c.main.metrics.Disconnect(metrics.ReasonBadCredentials)
 	c.log.Error().Err(err).Msg("XMPP server rejected the credentials, not reconnecting")
 	c.login.BridgeState.Send(status.BridgeState{
 		StateEvent: status.StateBadCredentials,
@@ -266,6 +291,7 @@ func (c *XMPPClient) OnSessionStarted(ctx context.Context, s *xmppx.Session) err
 	c.joinBookmarkedRooms(ctx, s)
 
 	c.connected.Store(true)
+	c.setState(metrics.StateConnected)
 	c.login.BridgeState.Send(status.BridgeState{StateEvent: status.StateConnected})
 
 	go c.catchUp(log.WithContext(context.Background()), s, since)

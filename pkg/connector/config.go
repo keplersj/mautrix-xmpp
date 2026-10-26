@@ -3,6 +3,7 @@ package connector
 import (
 	_ "embed"
 	"fmt"
+	"net"
 	"net/url"
 	"time"
 
@@ -56,6 +57,11 @@ type Config struct {
 	SendReadMarkers   bool `yaml:"send_read_markers"`
 	SendTyping        bool `yaml:"send_typing"`
 	LogMessageContent bool `yaml:"log_message_content"`
+	Metrics           struct {
+		Enabled bool   `yaml:"enabled"`
+		Listen  string `yaml:"listen"`
+		Pprof   bool   `yaml:"pprof"`
+	} `yaml:"metrics"`
 }
 
 // Validate checks the config for values that would make the bridge misbehave.
@@ -83,6 +89,11 @@ func (c *Config) Validate() error {
 	if c.Proxy != "" {
 		if err := validateProxyURL(c.Proxy); err != nil {
 			return fmt.Errorf("network.proxy: %w", err)
+		}
+	}
+	if c.Metrics.Enabled {
+		if _, _, err := net.SplitHostPort(c.Metrics.Listen); err != nil {
+			return fmt.Errorf("network.metrics.listen must be host:port: %w", err)
 		}
 	}
 	return nil
@@ -117,4 +128,7 @@ func upgradeConfig(helper up.Helper) {
 	helper.Copy(up.Bool, "send_read_markers")
 	helper.Copy(up.Bool, "send_typing")
 	helper.Copy(up.Bool, "log_message_content")
+	helper.Copy(up.Bool, "metrics", "enabled")
+	helper.Copy(up.Str, "metrics", "listen")
+	helper.Copy(up.Bool, "metrics", "pprof")
 }
