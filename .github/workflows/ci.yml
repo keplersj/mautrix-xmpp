@@ -30,6 +30,13 @@ jobs:
         with:
           version: v2.15.0
 
+  grafana:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+      - name: Check dashboard queries and alert rules
+        run: make check-grafana
+
   integration:
     runs-on: ubuntu-24.04
     steps:

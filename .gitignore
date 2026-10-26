@@ -5,3 +5,4 @@
 /config.yaml
 /registration.yaml
 /logs/
+/contrib/grafana/.dashboard-queries.yaml

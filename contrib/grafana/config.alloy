@@ -1,0 +1,129 @@
+// Grafana Alloy config for mautrix-xmpp: metrics to Prometheus/Mimir, profiles
+// to Pyroscope and logs to Loki. Keep the parts you use.
+//
+// Bridge config this expects:
+//
+//   network:
+//     metrics:
+//       enabled: true
+//       listen: 0.0.0.0:8001  # 127.0.0.1:8001 if Alloy runs on the same host
+//       pprof: true           # only for the Pyroscope part
+//   logging:
+//     min_level: info
+//     writers:
+//       - type: stdout
+//         format: json        # only for the Loki part
+//
+// Endpoints and credentials come from environment variables, for example for
+// Grafana Cloud: PROMETHEUS_URL=https://prometheus-xxx.grafana.net/api/prom/push
+// with PROMETHEUS_USER and GRAFANA_CLOUD_TOKEN.
+
+// ---- Metrics ---------------------------------------------------------------
+
+prometheus.scrape "mautrix_xmpp" {
+  // The dashboard and alerts.yaml expect this job name.
+  job_name        = "mautrix-xmpp"
+  targets         = [{"__address__" = "mautrix-xmpp:8001"}]
+  scrape_interval = "30s"
+  forward_to      = [prometheus.remote_write.default.receiver]
+}
+
+prometheus.remote_write "default" {
+  endpoint {
+    url = sys.env("PROMETHEUS_URL")
+
+    basic_auth {
+      username = sys.env("PROMETHEUS_USER")
+      password = sys.env("GRAFANA_CLOUD_TOKEN")
+    }
+  }
+}
+
+// ---- Profiles (needs metrics.pprof: true) ----------------------------------
+
+pyroscope.scrape "mautrix_xmpp" {
+  targets    = [{"__address__" = "mautrix-xmpp:8001", "service_name" = "mautrix-xmpp"}]
+  forward_to = [pyroscope.write.default.receiver]
+
+  profiling_config {
+    // The bridge doesn't enable block or mutex profiling, so these would be
+    // empty.
+    profile.block {
+      enabled = false
+    }
+    profile.mutex {
+      enabled = false
+    }
+  }
+}
+
+pyroscope.write "default" {
+  endpoint {
+    url = sys.env("PYROSCOPE_URL")
+
+    basic_auth {
+      username = sys.env("PYROSCOPE_USER")
+      password = sys.env("GRAFANA_CLOUD_TOKEN")
+    }
+  }
+}
+
+// ---- Logs from Docker (needs JSON logging) ---------------------------------
+
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+}
+
+discovery.relabel "mautrix_xmpp" {
+  targets = discovery.docker.containers.targets
+
+  // Adjust to your container name.
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/mautrix-xmpp.*"
+    action        = "keep"
+  }
+
+  rule {
+    target_label = "job"
+    replacement  = "mautrix-xmpp"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+}
+
+loki.source.docker "mautrix_xmpp" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.mautrix_xmpp.output
+  forward_to = [loki.process.mautrix_xmpp.receiver]
+}
+
+loki.process "mautrix_xmpp" {
+  stage.json {
+    expressions = {level = "level"}
+  }
+
+  // Only the level becomes a label. Fields such as login IDs and JIDs stay in
+  // the log line, to keep Loki's label cardinality low; query them with
+  // `| json`.
+  stage.labels {
+    values = {level = ""}
+  }
+
+  forward_to = [loki.write.default.receiver]
+}
+
+loki.write "default" {
+  endpoint {
+    url = sys.env("LOKI_URL")
+
+    basic_auth {
+      username = sys.env("LOKI_USER")
+      password = sys.env("GRAFANA_CLOUD_TOKEN")
+    }
+  }
+}

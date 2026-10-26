@@ -1,0 +1,70 @@
+# Prometheus alerting rules for mautrix-xmpp. Load them into Prometheus
+# (rule_files), the Mimir or Grafana Cloud ruler (mimirtool rules load), or
+# import them as Grafana-managed alerts.
+#
+# They assume the scrape job is named "mautrix-xmpp", as in config.alloy. Change
+# the job matcher in MautrixXMPPDown if yours differs.
+groups:
+  - name: mautrix-xmpp
+    rules:
+      - alert: MautrixXMPPDown
+        expr: up{job="mautrix-xmpp"} == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: mautrix-xmpp is not answering metric scrapes
+          description: "{{ $labels.instance }} has been unreachable for 5 minutes."
+
+      # Summed per bridge, because a login in backoff flips between the
+      # connecting and disconnected states, which would reset `for` on each.
+      - alert: MautrixXMPPLoginDisconnected
+        expr: sum by (job, instance) (mautrix_xmpp_logins{state=~"disconnected|connecting"}) > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: XMPP accounts can't stay connected
+          description: "{{ $value }} login(s) on {{ $labels.instance }} have not been connected for 15 minutes. Check mautrix_xmpp_disconnects_total by reason, and the bridge logs."
+
+      - alert: MautrixXMPPBadCredentials
+        expr: sum by (job, instance) (mautrix_xmpp_logins{state="bad_credentials"}) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: An XMPP server rejected a bridged account's password
+          description: "{{ $value }} login(s) on {{ $labels.instance }} need to log in again. The bridge will not retry them."
+
+      - alert: MautrixXMPPDisconnectStorm
+        expr: sum by (job, instance) (increase(mautrix_xmpp_disconnects_total{reason!="bad_credentials"}[15m])) > 10
+        labels:
+          severity: warning
+        annotations:
+          summary: XMPP connections are flapping
+          description: "{{ $labels.instance }} lost XMPP connections {{ $value | humanize }} times in 15 minutes."
+
+      - alert: MautrixXMPPUnackedBacklog
+        expr: max by (job, instance) (mautrix_xmpp_unacked_stanzas) > 50
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: The XMPP server is not acknowledging stanzas
+          description: "{{ $value }} outbound stanzas on {{ $labels.instance }} have waited for a stream management ack for over 10 minutes."
+
+      # Only counts real failures: unconfirmed sends (servers without stream
+      # management) are not errors.
+      - alert: MautrixXMPPSendFailures
+        expr: |
+          (
+            sum by (job, instance) (rate(mautrix_xmpp_matrix_send_duration_seconds_count{result=~"failed|not_connected|ack_timeout"}[15m]))
+            /
+            sum by (job, instance) (rate(mautrix_xmpp_matrix_send_duration_seconds_count[15m]))
+          ) > 0.1
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: Messages from Matrix are failing to reach XMPP
+          description: "{{ $value | humanizePercentage }} of sends on {{ $labels.instance }} failed or were not acknowledged over the last 15 minutes."
