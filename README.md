@@ -38,7 +38,7 @@ servers.
    ```sh
    mkdir -p data && cp config.yaml data/
    docker run --rm --user 10001 --read-only -v "$PWD/data:/data" \
-     ghcr.io/keplersj/mautrix-xmpp:0.1.0
+     ghcr.io/keplersj/mautrix-xmpp:0.2.0
    ```
 
    (The data directory must be writable by uid 10001.) The bridge connects to Beeper over a
@@ -146,7 +146,7 @@ Example with the [beeper-bridges Helm chart](https://github.com/keplersj/helm-ch
 externalBridges:
   xmpp:
     enabled: true
-    image: {repository: ghcr.io/keplersj/mautrix-xmpp, tag: "0.1.0"}
+    image: {repository: ghcr.io/keplersj/mautrix-xmpp, tag: "0.2.0"}
     configSecret: {name: mautrix-xmpp-config}   # key config.yaml = bbctl output
 ```
 
