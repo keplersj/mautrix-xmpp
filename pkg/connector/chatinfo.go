@@ -75,12 +75,12 @@ func (c *XMPPClient) GetChatInfo(ctx context.Context, portal *bridgev2.Portal) (
 	}
 	info.Members.MemberMap.Set(bridgev2.ChatMember{EventSender: c.selfSender(), Membership: event.MembershipJoin})
 	if room == nil {
-		info.Name = new(j.Localpart())
+		info.Name = new(jidDisplayName(j))
 		return info, nil
 	}
 	name := room.name
 	if name == "" {
-		name = j.Localpart()
+		name = jidDisplayName(j)
 	}
 	info.Name = &name
 	if room.subject != nil {
@@ -192,10 +192,19 @@ func (c *XMPPClient) GetUserInfo(ctx context.Context, ghost *bridgev2.Ghost) (*b
 		}
 	}
 	if name == "" {
-		name = j.Localpart()
+		name = jidDisplayName(j)
 	}
 	info.Name = &name
 	return info, nil
+}
+
+// jidDisplayName is the fallback name for a JID with no better one: its
+// username, or the domain for gateway JIDs that have none.
+func jidDisplayName(j jid.JID) string {
+	if l := j.Localpart(); l != "" {
+		return l
+	}
+	return j.Domainpart()
 }
 
 // vcardAvatar returns the inline vCard photo as a bridge avatar.
@@ -263,7 +272,7 @@ func (c *XMPPClient) GetContactList(ctx context.Context) ([]*bridgev2.ResolveIde
 	out := make([]*bridgev2.ResolveIdentifierResponse, 0, len(items))
 	for _, item := range items {
 		j, err := parseBareJID(item.JID)
-		if err != nil || j.Localpart() == "" {
+		if err != nil || (j.Localpart() == "" && j.Domain().Equal(c.account.Domain())) {
 			continue
 		}
 		userID := makeUserID(j)

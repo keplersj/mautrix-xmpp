@@ -196,6 +196,28 @@ func TestIncomingCarbons(t *testing.T) {
 	}
 }
 
+func TestIncomingGatewayBot(t *testing.T) {
+	tc := newTestClient(t)
+	const bot = "cheogram.com"
+	evt := single[*simplevent.Message[*incoming]](t, tc.handle(&xmppx.Message{
+		From: bot, To: aliceJID + "/bridge", Type: xmppx.MessageChat, ID: "g1", Body: "Registered",
+	}))
+	if evt.PortalKey.ID != "dm:"+bot || evt.Sender.Sender != bot || evt.Sender.IsFromMe {
+		t.Errorf("from bot: %+v %+v", evt.Sender, evt.PortalKey)
+	}
+
+	// Our reply from another client arrives as a sent carbon addressed to the bot.
+	evt = single[*simplevent.Message[*incoming]](t, tc.handle(&xmppx.Message{
+		From: aliceJID,
+		CarbonSent: &xmppx.Carbon{Forwarded: xmppx.Forwarded{Message: &xmppx.Message{
+			From: aliceJID + "/phone", To: bot, Type: xmppx.MessageChat, ID: "g2", Body: "help",
+		}}},
+	}))
+	if !evt.Sender.IsFromMe || evt.PortalKey.ID != "dm:"+bot {
+		t.Errorf("to bot: %+v %+v", evt.Sender, evt.PortalKey)
+	}
+}
+
 func TestIncomingDropped(t *testing.T) {
 	tc := newTestClient(t)
 	tc.joinRoom()
