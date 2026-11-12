@@ -92,9 +92,10 @@ func (c *XMPPClient) resolveIncoming(log *zerolog.Logger, msg *xmppx.Message, ca
 		} else {
 			partner = from.Bare()
 		}
-		if partner.Localpart() == "" {
-			// Server announcements and transports aren't chats.
-			log.Debug().Stringer("from", from).Msg("Dropping message from a JID without a localpart")
+		if partner.Localpart() == "" && partner.Domain().Equal(c.account.Domain()) {
+			// Our own server's announcements aren't chats. Other domain JIDs are
+			// gateway bots (Cheogram, biboumi) and are bridged as 1:1 chats.
+			log.Debug().Stringer("from", from).Msg("Dropping message from our own server")
 			return nil
 		}
 		if c.getRoom(partner) != nil {
