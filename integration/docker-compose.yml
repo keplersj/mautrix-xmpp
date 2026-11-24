@@ -22,7 +22,7 @@ services:
       retries: 30
 
   synapse:
-    image: matrixdotorg/synapse:v1.163.0@sha256:e98ab72138d90fa8b8876c6421fe78a9fdb181c0d7cc690ad740e5173e0c65e6
+    image: matrixdotorg/synapse:v1.166.0@sha256:2cdc84f1de4687af89e4b7b1fe7b5f93e0ee7913243b63f79b05319cb6a8f525
     entrypoint: ["/config/start.sh"]
     volumes:
       - ./synapse:/config:ro
